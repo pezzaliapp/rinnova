@@ -376,7 +376,7 @@ Rispondi SOLO con JSON con questa forma:
  "limiti": [{"titolo": string, "dettaglio": string, "priorita": "alta"|"media"|"bassa"}],
  "bug": [stessa forma], "sicurezza": [stessa forma], "miglioramenti": [stessa forma],
  "punti_forti": [string, frasi brevi su cosa è fatto bene],
- "piano_v2": [string, passi concreti in ordine per la versione migliorata, realizzabili modificando il codice esistente]}`;
+ "piano_v2": [string, MASSIMO 4 passi piccoli e sicuri, realizzabili con poche modifiche al codice esistente: niente refactoring, niente nuove librerie, niente cambi di architettura]}`;
 
 let report = null;
 $('#analyze').addEventListener('click', async () => {
@@ -443,12 +443,45 @@ Regole importanti:
 - Per modificare un file esistente usa "modifiche": "cerca" deve essere un pezzo di testo COPIATO ESATTAMENTE dal file (spazi e a capo compresi), abbastanza lungo da essere unico; "sostituisci" è il testo nuovo.
 - Usa "file_riscritti" solo per file piccoli (meno di 150 righe) che cambi quasi del tutto, con il contenuto completo.
 - Usa "nuovi_file" per i file da aggiungere.
+DIVIETI ASSOLUTI (se il passo li richiede, NON farlo: restituisci elenchi vuoti e spiega il motivo in "riepilogo"):
+- Niente refactoring strutturali: non spostare codice in Web Worker, non convertire a moduli ES, non cambiare l'architettura, non riscrivere file interi grandi.
+- Non rinominare funzioni, variabili, costanti o proprietà esportate: altri file le usano.
+- Non aggiungere librerie esterne e non scrivere MAI il codice di una libreria (niente file in lib/ o vendor/, niente .min.js).
+- Non rimuovere tag <script>, file o funzioni esistenti.
+- Ogni modifica deve lasciare il file sintatticamente valido: "sostituisci" prende il posto di TUTTO il testo di "cerca", senza duplicare righe o dichiarazioni.
 Per ogni modifica spiega in italiano semplice, per chi non è programmatore: "cosa" = titolo breve della modifica; "perche" = quale problema c'era; "miglioria" = cosa migliora concretamente per chi usa l'app.
 Rispondi SOLO con JSON:
 {"modifiche": [{"file": string, "cerca": string, "sostituisci": string, "cosa": string, "perche": string, "miglioria": string}],
  "file_riscritti": [{"file": string, "contenuto": string, "cosa": string, "perche": string, "miglioria": string}],
  "nuovi_file": [{"file": string, "contenuto": string, "cosa": string, "perche": string, "miglioria": string}],
  "riepilogo": [string, cosa è cambiato, frasi brevi in italiano]}`;
+
+/* Controlli automatici: un passo che rompe un file viene annullato */
+function jsSyntaxError(code) {
+  if (/^\s*(import|export)\s/m.test(code)) return null; // moduli ES: non verificabili qui
+  try { new Function(code); return null; } catch (e) { return e instanceof SyntaxError ? 'errore di sintassi: ' + e.message : null; }
+}
+function checkFile(path, code, files) {
+  if (code == null) return null;
+  if (/\.(m?js|cjs)$/i.test(path)) return jsSyntaxError(code);
+  if (/\.(json|webmanifest)$/i.test(path)) { try { JSON.parse(code); return null; } catch (e) { return 'JSON non valido'; } }
+  if (/\.html?$/i.test(path)) {
+    const dir = path.includes('/') ? path.replace(/[^/]*$/, '') : '';
+    const exists = p => files.has(p) || snapshot.entries.some(e => e.path === p);
+    const srcs = [...code.matchAll(/<script[^>]*\ssrc=["']([^"']+)["']/gi)].map(m => m[1]).filter(u => !/^(https?:)?\/\//.test(u));
+    const missing = srcs.map(u => dir + u.replace(/^\.\//, '').split(/[?#]/)[0]).filter(u => !exists(u));
+    if (missing.length) return 'script inesistente: ' + missing.join(', ');
+    const orig = snapshot.entries.find(e => e.path === path)?.text || '';
+    const origSrcs = [...orig.matchAll(/<script[^>]*\ssrc=["']([^"']+)["']/gi)].map(m => m[1]);
+    const removed = origSrcs.filter(u => !srcs.includes(u) && !/^(https?:)?\/\//.test(u));
+    if (removed.length) return 'rimosso lo script ' + removed.join(', ');
+    for (const m of code.matchAll(/<script(?![^>]*\ssrc=)([^>]*)>([\s\S]*?)<\/script>/gi)) {
+      if (/type=["'](module|application\/(ld\+)?json|text\/template)/i.test(m[1])) continue;
+      const err = jsSyntaxError(m[2]); if (err) return 'script interno: ' + err;
+    }
+  }
+  return null;
+}
 
 async function freeRepoName(owner, base) {
   let name = base;
@@ -470,7 +503,7 @@ $('#build').addEventListener('click', async () => {
       const files = [...new Set([...snapshot.aiFiles, ...changed])].filter(p => text.has(p)).map(p => `===== FILE: ${p} =====\n${text.get(p)}`).join('\n\n');
       return `ELENCO COMPLETO DEI FILE DEL REPO:\n${tree}\n\nCONTENUTO ATTUALE DEI FILE:\n\n${files}`;
     };
-    const steps = (report.piano_v2 || []).slice(0, 6);
+    const steps = (report.piano_v2 || []).slice(0, 4);
     if (!steps.length) throw new Error('L\'analisi non contiene un piano da applicare.');
     for (let si = 0; si < steps.length; si++) {
       const step = steps[si];
@@ -487,6 +520,7 @@ $('#build').addEventListener('click', async () => {
         } catch (e) { if (!e.truncated) throw e; log('… passo ' + (si + 1) + ': risposta troppo lunga, riprovo in piccolo'); }
       }
       if (!plan) { ko++; skipped.push({ file: '—', cosa: step, perche: 'risposta dell\'AI non valida' }); log('✗ passo ' + (si + 1) + ' saltato'); continue; }
+      const bkText = new Map(text), bkChanged = new Set(changed), bkOk = ok, bkKo = ko, bkDone = done.length, bkSkip = skipped.length, stepFiles = new Set();
       for (const m of plan.modifiche || []) {
         const cur = text.get(m.file);
         if (cur == null || !m.cerca) { ko++; skipped.push(m); log('✗ ' + m.file + ': file non trovato'); continue; }
@@ -499,16 +533,24 @@ $('#build').addEventListener('click', async () => {
         if (at < 0) { ko++; skipped.push(m); log('✗ ' + m.file + ': modifica non applicabile (' + (m.perche || '') + ')'); continue; }
         const base = text.get(m.file);
         text.set(m.file, base.slice(0, at) + (m.sostituisci ?? '') + base.slice(at + find.length));
-        changed.add(m.file); ok++; log('✓ ' + m.file + ': ' + (m.cosa || m.perche || 'modificato'));
+        changed.add(m.file); stepFiles.add(m.file); ok++; log('✓ ' + m.file + ': ' + (m.cosa || m.perche || 'modificato'));
         done.push({ file: m.file, tipo: 'modificato', cosa: m.cosa, perche: m.perche, miglioria: m.miglioria, prima: find, dopo: m.sostituisci ?? '' });
       }
       for (const f of [...(plan.file_riscritti || []), ...(plan.nuovi_file || [])]) {
         if (!f.file || typeof f.contenuto !== 'string' || /^\/|\.\./.test(f.file)) continue;
         const isNew = !snapshot.entries.some(e => e.path === f.file) && !text.has(f.file);
-        text.set(f.file, f.contenuto); changed.add(f.file); ok++; log((isNew ? '+ ' : '✓ ') + f.file + ': ' + (f.cosa || f.perche || (isNew ? 'nuovo file' : 'riscritto')));
+        if (isNew && /(^|\/)(lib|vendor|node_modules)\/|\.min\.(js|css)$/i.test(f.file)) { ko++; skipped.push({ file: f.file, cosa: f.cosa, perche: 'le librerie esterne non possono essere scritte dall\'AI' }); log('✗ ' + f.file + ': libreria esterna rifiutata'); continue; }
+        text.set(f.file, f.contenuto); changed.add(f.file); stepFiles.add(f.file); ok++; log((isNew ? '+ ' : '✓ ') + f.file + ': ' + (f.cosa || f.perche || (isNew ? 'nuovo file' : 'riscritto')));
         done.push({ file: f.file, tipo: isNew ? 'nuovo file' : 'riscritto', cosa: f.cosa, perche: f.perche, miglioria: f.miglioria, dopo: f.contenuto });
       }
-      riepilogo.push(...(plan.riepilogo || []));
+      const problems = [...stepFiles].map(f => [f, checkFile(f, text.get(f), text)]).filter(x => x[1]);
+      if (problems.length) {
+        text.clear(); bkText.forEach((v, k) => text.set(k, v)); changed.clear(); bkChanged.forEach(v => changed.add(v));
+        ok = bkOk; done.length = bkDone; skipped.length = bkSkip; ko = bkKo + 1;
+        skipped.push({ file: problems.map(x => x[0]).join(', '), cosa: step, perche: 'annullato: avrebbe rotto l\'app (' + problems.map(x => x[0] + ': ' + x[1]).join('; ') + ')' });
+        problems.forEach(x => log('⚠ ' + x[0] + ': ' + x[1]));
+        log('↩ passo ' + (si + 1) + ' annullato: le sue modifiche avrebbero rotto l\'app');
+      } else riepilogo.push(...(plan.riepilogo || []));
       if (si < steps.length - 1) await sleep(4000);
     }
     bar('#bar2', 0.45);
