@@ -1,0 +1,14 @@
+{
+  "name": "Rinnova",
+  "short_name": "Rinnova",
+  "description": "Analizza le tue app su GitHub e crea la versione migliorata.",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#EEF1F4",
+  "theme_color": "#14202B",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
