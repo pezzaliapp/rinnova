@@ -335,7 +335,7 @@ $('#filter').addEventListener('input', renderRepos);
 
 /* ---------- lettura del codice ---------- */
 const TEXT_EXT = /\.(html?|css|js|mjs|cjs|ts|tsx|jsx|json|webmanifest|md|txt|svg|xml|py|toml|ya?ml|rules|sh|vue|svelte|php|csv|gitignore|nojekyll|env\.example)$/i;
-const SKIP_ANALYSIS = /(^|\/)(node_modules|vendor|dist|build|\.git)\/|\.min\.(js|css)$|(^|\/)lib\/|package-lock\.json$/i;
+const SKIP_ANALYSIS = /(^|\/)(node_modules|vendor|dist|build|data|dati|assets|\.git)\/|\.min\.(js|css)$|(^|\/)lib\/|package-lock\.json$|\.(pack|enc|key|pem)(\.json)?$|(^|\/)\.env/i;
 const MAX_FILE_FOR_AI = 120_000, MAX_TOTAL_FOR_AI = 450_000;
 let snapshot = null; // { repo, branch, entries:[{path,mode,sha,size,text?}], aiFiles:[path] }
 

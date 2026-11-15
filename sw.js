@@ -1,6 +1,6 @@
 /* Service worker: mette in cache solo i file dell'app.
  * Le chiamate a GitHub e a Gemini passano sempre dalla rete e non vengono salvate. */
-const VERSION = 'rinnova-v1.5.0';
+const VERSION = 'rinnova-v1.5.1';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
