@@ -128,6 +128,7 @@
       </div>
       <p class="hint" id="rFiles"></p>
     </div>
+    <div class="card"><h2>Punti di forza</h2><ul id="rForti" style="padding-left:1.2rem;margin:0"></ul></div>
     <div class="card"><h2>Limiti</h2><div id="rLimiti"></div></div>
     <div class="card"><h2>Bug e errori</h2><div id="rBug"></div></div>
     <div class="card"><h2>Sicurezza</h2><div id="rSic"></div></div>
@@ -368,11 +369,13 @@ const SYS_ANALISI = `Sei un revisore senior di applicazioni web (PWA in HTML, CS
 Analizzi il codice di un'app e scrivi un giudizio onesto, concreto e in italiano semplice, comprensibile anche da chi non è programmatore esperto.
 Valuta: funzionalità e limiti, bug reali, sicurezza (chiavi esposte, regole Firebase, XSS, dati non validati), prestazioni, uso offline e service worker, accessibilità, esperienza su smartphone, qualità del codice e manutenibilità.
 Cita file e punti precisi. Non inventare problemi che non vedi nel codice. Nessun suggerimento deve richiedere servizi a pagamento.
+IMPORTANTE: in "limiti", "bug", "sicurezza" e "miglioramenti" metti SOLO problemi reali o modifiche concrete da fare, MAI elogi o cose che funzionano già bene. Le cose fatte bene vanno solo in "punti_forti". Se una sezione non ha problemi, lascia l'elenco vuoto. La priorità indica quanto è urgente intervenire.
 Rispondi SOLO con JSON con questa forma:
 {"nome_app": string, "cosa_fa": string (2-3 frasi), "voto": numero da 1 a 10,
  "limiti": [{"titolo": string, "dettaglio": string, "priorita": "alta"|"media"|"bassa"}],
  "bug": [stessa forma], "sicurezza": [stessa forma], "miglioramenti": [stessa forma],
- "piano_v2": [string, passi concreti in ordine per la versione migliorata]}`;
+ "punti_forti": [string, frasi brevi su cosa è fatto bene],
+ "piano_v2": [string, passi concreti in ordine per la versione migliorata, realizzabili modificando il codice esistente]}`;
 
 let report = null;
 $('#analyze').addEventListener('click', async () => {
@@ -413,6 +416,7 @@ function renderReport() {
   $('#rScore').replaceChildren(String(report.voto ?? '–'), el('small', { textContent: '/10' }));
   $('#rFiles').textContent = `Repo ${chosen.full_name} · ${snapshot.aiFiles.length} file analizzati su ${snapshot.entries.length}`;
   items('#rLimiti', report.limiti); items('#rBug', report.bug); items('#rSic', report.sicurezza); items('#rMig', report.miglioramenti);
+  $('#rForti').replaceChildren(...(report.punti_forti || []).map(p => el('li', { textContent: p, style: 'margin:.3rem 0' })));
   $('#rPiano').replaceChildren(...(report.piano_v2 || []).map(p => el('li', { textContent: p })));
   $('#newName').textContent = '“' + nextName(chosen.name) + '”';
   $('#log').textContent = ''; $('#log').style.display = 'none'; status('#st2', ''); $('#changes').hidden = true;
@@ -420,7 +424,7 @@ function renderReport() {
 function reportMarkdown() {
   const sec = (t, a) => `## ${t}\n\n` + ((a && a.length) ? a.map(x => `- **[${x.priorita}] ${x.titolo}** — ${x.dettaglio}`).join('\n') : '_Niente da segnalare._') + '\n';
   return `# Analisi di ${report.nome_app || chosen.name}\n\nRepo: \`${chosen.full_name}\` · Data: ${new Date().toLocaleDateString('it-IT')} · Voto: **${report.voto}/10**\n\n${report.cosa_fa || ''}\n\n` +
-    sec('Limiti', report.limiti) + '\n' + sec('Bug e errori', report.bug) + '\n' + sec('Sicurezza', report.sicurezza) + '\n' + sec('Miglioramenti suggeriti', report.miglioramenti) +
+    `## Punti di forza\n\n` + ((report.punti_forti || []).map(p => '- ' + p).join('\n') || '_—_') + '\n\n' + sec('Limiti', report.limiti) + '\n' + sec('Bug e errori', report.bug) + '\n' + sec('Sicurezza', report.sicurezza) + '\n' + sec('Miglioramenti suggeriti', report.miglioramenti) +
     `\n## Piano per la versione nuova\n\n` + (report.piano_v2 || []).map((p, i) => `${i + 1}. ${p}`).join('\n') + '\n\n---\n_Generato con Rinnova._\n';
 }
 $('#dl').addEventListener('click', () => {
