@@ -249,22 +249,23 @@ async function gemini(system, user, { json = true } = {}) {
     contents: [{ role: 'user', parts: [{ text: user }] }],
     generationConfig: { temperature: 0.3, maxOutputTokens: 65536, ...(json ? { responseMimeType: 'application/json' } : {}) }
   };
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const r = await fetch(GM + 'models/' + encodeURIComponent(model) + ':generateContent', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': store.get('gm') }, body: JSON.stringify(body)
     });
     if (r.status === 429 || r.status === 503) {
-      if (attempt === 2) throw new Error(r.status === 429 ? 'Limite gratuito di Gemini raggiunto. Riprova tra qualche minuto (o domani se è il limite giornaliero).' : 'Gemini è sovraccarico, riprova tra poco.');
-      await sleep(20000 * (attempt + 1)); continue;
+      if (attempt === 3) throw new Error(r.status === 429 ? 'Limite gratuito di Gemini raggiunto. Riprova tra qualche minuto (o domani se è il limite giornaliero).' : 'Gemini è sovraccarico, riprova tra poco.');
+      status('#st2', 'Limite al minuto del piano gratuito: attendo e riprovo…'); await sleep(30000 * (attempt + 1)); continue;
     }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error('Gemini: ' + (j.error?.message || r.status));
+    if (j.candidates?.[0]?.finishReason === 'MAX_TOKENS') { const e = new Error('Risposta troppo lunga, interrotta'); e.truncated = true; throw e; }
     const parts = j.candidates?.[0]?.content?.parts || [];
     const text = parts.filter(p => !p.thought).map(p => p.text || '').join('');
     if (!text) throw new Error('Gemini non ha restituito testo (motivo: ' + (j.candidates?.[0]?.finishReason || j.promptFeedback?.blockReason || 'sconosciuto') + ').');
     if (!json) return text;
     try { return JSON.parse(text); }
-    catch { const m = text.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error('Risposta di Gemini non valida (JSON). Riprova.'); }
+    catch { const m = text.match(/\{[\s\S]*\}/); try { if (m) return JSON.parse(m[0]); } catch {} const e = new Error('Risposta di Gemini incompleta'); e.truncated = true; throw e; }
   }
 }
 async function loadModels() {
@@ -462,38 +463,56 @@ $('#build').addEventListener('click', async () => {
   if (!report || !snapshot) return;
   const btn = $('#build'); btn.disabled = true; $('#log').textContent = '';
   try {
-    status('#st2', 'L\'AI sta preparando le modifiche (1–3 minuti)…'); bar('#bar2', 0.05);
-    const plan = await gemini(SYS_MODIFICA,
-      `ANALISI E PIANO:\n${JSON.stringify({ limiti: report.limiti, bug: report.bug, sicurezza: report.sicurezza, miglioramenti: report.miglioramenti, piano_v2: report.piano_v2 })}\n` +
-      (report.extra ? `RICHIESTE DEL PROPRIETARIO: ${report.extra}\n` : '') + `\n${filesBlock(snapshot)}`);
-    bar('#bar2', 0.4);
-
-    // applica le modifiche su una copia dei testi
     const text = new Map(snapshot.entries.filter(e => e.text != null).map(e => [e.path, e.text]));
-    const changed = new Set(); let ok = 0, ko = 0; const done = [], skipped = [];
-    for (const m of plan.modifiche || []) {
-      const cur = text.get(m.file);
-      if (cur == null || !m.cerca) { ko++; skipped.push(m); log('✗ ' + m.file + ': file non trovato'); continue; }
-      let at = cur.indexOf(m.cerca), find = m.cerca;
-      if (at < 0) { // tolleranza su a capo Windows / spazi finali
-        const norm = s => s.replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n');
-        const n = norm(cur), f = norm(m.cerca); at = n.indexOf(f);
-        if (at >= 0) { text.set(m.file, n); find = f; }
+    const changed = new Set(); let ok = 0, ko = 0; const done = [], skipped = [], riepilogo = [];
+    const curBlock = () => {
+      const tree = snapshot.entries.map(e => e.path).concat([...text.keys()].filter(k => !snapshot.entries.some(e => e.path === k))).join('\n');
+      const files = [...new Set([...snapshot.aiFiles, ...changed])].filter(p => text.has(p)).map(p => `===== FILE: ${p} =====\n${text.get(p)}`).join('\n\n');
+      return `ELENCO COMPLETO DEI FILE DEL REPO:\n${tree}\n\nCONTENUTO ATTUALE DEI FILE:\n\n${files}`;
+    };
+    const steps = (report.piano_v2 || []).slice(0, 6);
+    if (!steps.length) throw new Error('L\'analisi non contiene un piano da applicare.');
+    for (let si = 0; si < steps.length; si++) {
+      const step = steps[si];
+      status('#st2', `Passo ${si + 1} di ${steps.length}: ${step.slice(0, 90)}${step.length > 90 ? '…' : ''}`);
+      bar('#bar2', 0.03 + 0.4 * si / steps.length);
+      let plan = null;
+      for (let tryN = 0; tryN < 2 && !plan; tryN++) {
+        try {
+          plan = await gemini(SYS_MODIFICA,
+            `APPLICA SOLO QUESTO PASSO DEL PIANO (gli altri verranno fatti dopo):\n${step}\n` +
+            (tryN ? 'ATTENZIONE: la risposta precedente era troppo lunga. Fai modifiche più piccole e mirate, usa solo "modifiche" con testi brevi.\n' : '') +
+            (report.extra ? `RICHIESTE DEL PROPRIETARIO: ${report.extra}\n` : '') +
+            `CONTESTO DELL'ANALISI: ${JSON.stringify({ limiti: report.limiti, bug: report.bug, sicurezza: report.sicurezza })}\n\n${curBlock()}`);
+        } catch (e) { if (!e.truncated) throw e; log('… passo ' + (si + 1) + ': risposta troppo lunga, riprovo in piccolo'); }
       }
-      if (at < 0) { ko++; skipped.push(m); log('✗ ' + m.file + ': modifica non applicabile (' + (m.perche || '') + ')'); continue; }
-      const base = text.get(m.file);
-      text.set(m.file, base.slice(0, at) + (m.sostituisci ?? '') + base.slice(at + find.length));
-      changed.add(m.file); ok++; log('✓ ' + m.file + ': ' + (m.perche || 'modificato'));
-      done.push({ file: m.file, tipo: 'modificato', cosa: m.cosa, perche: m.perche, miglioria: m.miglioria, prima: find, dopo: m.sostituisci ?? '' });
+      if (!plan) { ko++; skipped.push({ file: '—', cosa: step, perche: 'risposta dell\'AI non valida' }); log('✗ passo ' + (si + 1) + ' saltato'); continue; }
+      for (const m of plan.modifiche || []) {
+        const cur = text.get(m.file);
+        if (cur == null || !m.cerca) { ko++; skipped.push(m); log('✗ ' + m.file + ': file non trovato'); continue; }
+        let at = cur.indexOf(m.cerca), find = m.cerca;
+        if (at < 0) {
+          const norm = x => x.replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n');
+          const n = norm(cur), f = norm(m.cerca); at = n.indexOf(f);
+          if (at >= 0) { text.set(m.file, n); find = f; }
+        }
+        if (at < 0) { ko++; skipped.push(m); log('✗ ' + m.file + ': modifica non applicabile (' + (m.perche || '') + ')'); continue; }
+        const base = text.get(m.file);
+        text.set(m.file, base.slice(0, at) + (m.sostituisci ?? '') + base.slice(at + find.length));
+        changed.add(m.file); ok++; log('✓ ' + m.file + ': ' + (m.cosa || m.perche || 'modificato'));
+        done.push({ file: m.file, tipo: 'modificato', cosa: m.cosa, perche: m.perche, miglioria: m.miglioria, prima: find, dopo: m.sostituisci ?? '' });
+      }
+      for (const f of [...(plan.file_riscritti || []), ...(plan.nuovi_file || [])]) {
+        if (!f.file || typeof f.contenuto !== 'string' || /^\/|\.\./.test(f.file)) continue;
+        const isNew = !snapshot.entries.some(e => e.path === f.file) && !text.has(f.file);
+        text.set(f.file, f.contenuto); changed.add(f.file); ok++; log((isNew ? '+ ' : '✓ ') + f.file + ': ' + (f.cosa || f.perche || (isNew ? 'nuovo file' : 'riscritto')));
+        done.push({ file: f.file, tipo: isNew ? 'nuovo file' : 'riscritto', cosa: f.cosa, perche: f.perche, miglioria: f.miglioria, dopo: f.contenuto });
+      }
+      riepilogo.push(...(plan.riepilogo || []));
+      if (si < steps.length - 1) await sleep(4000);
     }
-    for (const f of [...(plan.file_riscritti || []), ...(plan.nuovi_file || [])]) {
-      if (!f.file || typeof f.contenuto !== 'string' || /^\/|\.\./.test(f.file)) continue;
-      const isNew = !snapshot.entries.some(e => e.path === f.file);
-      text.set(f.file, f.contenuto); changed.add(f.file); ok++; log((isNew ? '+ ' : '✓ ') + f.file + ': ' + (f.perche || (isNew ? 'nuovo file' : 'riscritto')));
-      done.push({ file: f.file, tipo: isNew ? 'nuovo file' : 'riscritto', cosa: f.cosa, perche: f.perche, miglioria: f.miglioria, dopo: f.contenuto });
-    }
+    bar('#bar2', 0.45);
     if (!ok) throw new Error('L\'AI non ha prodotto modifiche applicabili. Riprova (a volte basta ripetere).');
-    const riepilogo = plan.riepilogo || [];
     const fence = s => { const t = s.length > 1500 ? s.slice(0, 1500) + '\n… (continua)' : s; return '```\n' + t.replace(/```/g, '`​``') + '\n```'; };
     const dettaglio = done.map((d, i) =>
       `### ${i + 1}. ${d.cosa || d.file}\n\n- **File:** \`${d.file}\` (${d.tipo})\n- **Perché:** ${d.perche || '—'}\n` +
