@@ -134,6 +134,12 @@
     <div class="card"><h2>Sicurezza</h2><div id="rSic"></div></div>
     <div class="card"><h2>Miglioramenti suggeriti</h2><div id="rMig"></div></div>
     <div class="card"><h2>Piano per la versione nuova</h2><ol id="rPiano" style="padding-left:20px;margin:0"></ol></div>
+    <div class="card" id="edCard" hidden>
+      <h2>Edizioni per ruolo</h2>
+      <p class="hint">L'app potrà creare un <b>unico file HTML</b> per ognuna di queste persone: funziona da solo, anche offline, e le parti riservate vengono <b>tolte dal file</b>, non solo nascoste. Scegli quali aggiungere.</p>
+      <div id="edList"></div>
+      <p class="hint">Dopo la creazione prova il file di ogni ruolo e verifica che non contenga dati riservati: i dati da includere li sceglie l'AI.</p>
+    </div>
     <div class="card">
       <h2>Crea la versione migliorata</h2>
       <p class="hint">Crea un nuovo repo <b>privato</b> <span id="newName"></span> con il codice aggiornato. L'originale non viene toccato.</p>
@@ -376,7 +382,9 @@ Rispondi SOLO con JSON con questa forma:
  "limiti": [{"titolo": string, "dettaglio": string, "priorita": "alta"|"media"|"bassa"}],
  "bug": [stessa forma], "sicurezza": [stessa forma], "miglioramenti": [stessa forma],
  "punti_forti": [string, frasi brevi su cosa è fatto bene],
- "piano_v2": [string, MASSIMO 4 passi piccoli e sicuri, realizzabili con poche modifiche al codice esistente: niente refactoring, niente nuove librerie, niente cambi di architettura]}`;
+ "piano_v2": [string, MASSIMO 4 passi piccoli e sicuri, realizzabili con poche modifiche al codice esistente: niente refactoring, niente nuove librerie, niente cambi di architettura],
+ "edizioni": [{"ruolo": string (una parola minuscola, es. "agente", "cliente", "tecnico"), "nome": string, "descrizione": string (una frase), "vede": [string], "nonVede": [string]}]}
+EDIZIONI PER RUOLO: proponi MASSIMO 2 edizioni (es. agente, cliente) SOLO se l'app contiene dati o funzioni che alcune persone non devono vedere o usare: prezzi d'acquisto, costi, margini, sconti interni, impostazioni, caricamento o modifica dei dati, backup, dati di altri clienti. Ogni edizione diventerà un file HTML unico da condividere, che funziona offline e da cui le parti riservate vengono tolte. In "vede" e "nonVede" scrivi cose concrete di QUESTA app. Lascia "edizioni" vuoto se l'app non ha nulla da riservare oppure se i dati arrivano da un server (Firebase, Cloudflare Worker, API): in quel caso il file non può proteggerli.`;
 
 let report = null;
 $('#analyze').addEventListener('click', async () => {
@@ -419,6 +427,14 @@ function renderReport() {
   items('#rLimiti', report.limiti); items('#rBug', report.bug); items('#rSic', report.sicurezza); items('#rMig', report.miglioramenti);
   $('#rForti').replaceChildren(...(report.punti_forti || []).map(p => el('li', { textContent: p, style: 'margin:.3rem 0' })));
   $('#rPiano').replaceChildren(...(report.piano_v2 || []).map(p => el('li', { textContent: p })));
+  const eds = (report.edizioni || []).filter(e => e && /^[a-z][a-z0-9-]{1,20}$/.test(e.ruolo || '')).slice(0, 2);
+  report.edizioni = eds;
+  $('#edCard').hidden = !eds.length;
+  $('#edList').replaceChildren(...eds.map(e => el('label', { class: 'item', style: 'display:block;cursor:pointer' },
+    el('b', {}, (() => { const c = el('input', { type: 'checkbox', checked: true }); c.dataset.ed = e.ruolo; c.style.cssText = 'width:auto;margin-right:.5rem'; return c; })(), e.nome || e.ruolo),
+    el('p', { textContent: e.descrizione || '' }),
+    el('p', { textContent: 'Vede: ' + (e.vede || []).join(' · ') }),
+    el('p', { textContent: 'Non riceve: ' + (e.nonVede || []).join(' · ') }))));
   $('#newName').textContent = '“' + nextName(chosen.name) + '”';
   $('#log').textContent = ''; $('#log').style.display = 'none'; status('#st2', ''); $('#changes').hidden = true;
 }
@@ -426,7 +442,9 @@ function reportMarkdown() {
   const sec = (t, a) => `## ${t}\n\n` + ((a && a.length) ? a.map(x => `- **[${x.priorita}] ${x.titolo}** — ${x.dettaglio}`).join('\n') : '_Niente da segnalare._') + '\n';
   return `# Analisi di ${report.nome_app || chosen.name}\n\nRepo: \`${chosen.full_name}\` · Data: ${new Date().toLocaleDateString('it-IT')} · Voto: **${report.voto}/10**\n\n${report.cosa_fa || ''}\n\n` +
     `## Punti di forza\n\n` + ((report.punti_forti || []).map(p => '- ' + p).join('\n') || '_—_') + '\n\n' + sec('Limiti', report.limiti) + '\n' + sec('Bug e errori', report.bug) + '\n' + sec('Sicurezza', report.sicurezza) + '\n' + sec('Miglioramenti suggeriti', report.miglioramenti) +
-    `\n## Piano per la versione nuova\n\n` + (report.piano_v2 || []).map((p, i) => `${i + 1}. ${p}`).join('\n') + '\n\n---\n_Generato con Rinnova._\n';
+    `\n## Piano per la versione nuova\n\n` + (report.piano_v2 || []).map((p, i) => `${i + 1}. ${p}`).join('\n') + '\n' +
+    ((report.edizioni || []).length ? `\n## Edizioni per ruolo proposte\n\n` + report.edizioni.map(e => `- **${e.nome || e.ruolo}** — ${e.descrizione || ''}\n  - Vede: ${(e.vede || []).join('; ')}\n  - Non riceve: ${(e.nonVede || []).join('; ')}`).join('\n') + '\n' : '') +
+    '\n---\n_Generato con Rinnova._\n';
 }
 $('#dl').addEventListener('click', () => {
   const a = el('a', { href: URL.createObjectURL(new Blob([reportMarkdown()], { type: 'text/markdown' })), download: `ANALISI-${chosen.name}.md` });
@@ -481,6 +499,37 @@ function checkFile(path, code, files) {
     }
   }
   return null;
+}
+
+/* ---------- 3. edizioni per ruolo ---------- */
+const SYS_EDIZIONI = `Sei uno sviluppatore senior. Devi aggiungere a una web app le "edizioni per ruolo" usando il motore edizioni.js, che è GIÀ incluso nella pagina prima degli script dell'app. Non scrivere né modificare edizioni.js.
+Il motore crea, dall'app completa, un unico file HTML per un ruolo: toglie dal file gli elementi marcati e incorpora solo i dati che gli passi.
+API di edizioni.js (oggetto globale window.Edizioni):
+- Edizioni.attiva: true se la pagina è il file di un ruolo; Edizioni.ruolo: il ruolo ('agente'...); Edizioni.dati: i dati incorporati.
+- Edizioni.registra({ app: 'Nome', inserisciPrima: 'selettore CSS (facoltativo, dove mettere il pannello del titolare)', ruoli: { agente: { nome, descrizione, vede: [..], nonVede: [..] } }, prima: async (ruolo) => '' oppure un messaggio se mancano dati, raccogli: async (ruolo) => ({ ...solo i dati ammessi... }) })
+- Marcatura HTML: data-riservato="agente cliente" (tolto per quei ruoli) oppure data-riservato="*" (tolto in tutti i file: solo per il titolare).
+Fai SOLO queste tre cose, con "modifiche" piccole:
+1) HTML: aggiungi data-riservato agli elementi che i ruoli non devono avere (caricamento/import dati, impostazioni, backup, amministrazione, campi interni come costi, margini e sconti d'acquisto, script di librerie usate solo per importare). In "cerca" copia ESATTAMENTE il solo tag di apertura; in "sostituisci" lo stesso identico tag con in più l'attributo data-riservato. Non cambiare nient'altro nei file HTML.
+2) Nel file JavaScript principale aggiungi IN FONDO: if (window.Edizioni) { Edizioni.registra({...}); } con i ruoli richiesti. raccogli(ruolo) deve copiare i campi ammessi UNO PER UNO (mai l'oggetto intero, mai costi, margini, password, chiavi).
+3) Dove l'app legge i suoi dati salvati (localStorage, IndexedDB, file), aggiungi un ramo: se (window.Edizioni && Edizioni.attiva) usa Edizioni.dati e non salvare nulla. Dove il codice usa elementi che hai marcato (getElementById(...).addEventListener ecc.) rendilo sicuro con ?. o un controllo, perché nel file del ruolo quegli elementi non esistono. Dove l'app registra il service worker, non farlo se Edizioni.attiva.
+4) Se per un ruolo alcune funzioni interne vanno spente (es. colonne o campi di margine, sconti d'acquisto, costi), in quel ramo forza le impostazioni dell'app che le nascondono o disattivano; se servono, aggiungi data-riservato ai controlli che le riattiverebbero.
+Il codice deve restare sintatticamente valido. Non rinominare nulla, non aggiungere librerie.
+Rispondi SOLO con JSON:
+{"modifiche": [{"file": string, "cerca": string, "sostituisci": string, "cosa": string, "perche": string, "miglioria": string}],
+ "riepilogo": [string], "da_verificare": [string, cosa il proprietario deve controllare a mano]}`;
+
+// Nei file HTML l'AI può solo AGGIUNGERE data-riservato: tolti quelli, il file deve essere identico a prima.
+function soloMarcature(prima, dopo) {
+  const pulisci = h => h.replace(/\s+data-riservato\s*=\s*("[^"]*"|'[^']*')/gi, '').replace(/\r\n/g, '\n').replace(/[ \t]+\n/g, '\n');
+  return pulisci(prima) === pulisci(dopo);
+}
+// Inserisce <script src="edizioni.js"> prima del primo script locale della pagina.
+function conScriptEdizioni(html, rel) {
+  if (/<script[^>]*src=["'][^"']*edizioni\.js/i.test(html)) return html;
+  const tag = `<script src="${rel}"><\/script>\n`;
+  const m = html.match(/<script\b[^>]*\ssrc=["'](?!(?:https?:)?\/\/)[^"']+["'][^>]*>/i);
+  if (m) return html.slice(0, m.index) + tag + html.slice(m.index);
+  return html.replace(/<\/body>/i, tag + '</body>');
 }
 
 async function freeRepoName(owner, base) {
@@ -553,6 +602,53 @@ $('#build').addEventListener('click', async () => {
       } else riepilogo.push(...(plan.riepilogo || []));
       if (si < steps.length - 1) await sleep(4000);
     }
+    // edizioni per ruolo scelte dal proprietario
+    const ruoli = (report.edizioni || []).filter(e => document.querySelector(`[data-ed="${e.ruolo}"]`)?.checked);
+    let edNote = [];
+    if (ruoli.length) {
+      status('#st2', 'Aggiungo le edizioni per ruolo: ' + ruoli.map(r => r.nome || r.ruolo).join(', ') + '…'); bar('#bar2', 0.43);
+      const pagina = text.has('index.html') ? 'index.html' : [...text.keys()].find(k => /\.html?$/i.test(k));
+      const bkText = new Map(text), bkChanged = new Set(changed), bkOk = ok, bkDone = done.length;
+      let errore = '';
+      try {
+        if (!pagina) throw new Error('nessuna pagina HTML');
+        const motore = await (await fetch('edizioni.js', { cache: 'no-cache' })).text();
+        if (!/window\.Edizioni\s*=/.test(motore)) throw new Error('motore edizioni.js non disponibile');
+        const dir = pagina.includes('/') ? pagina.replace(/[^/]*$/, '') : '';
+        const plan = await gemini(SYS_EDIZIONI,
+          `RUOLI DA AGGIUNGERE:\n${JSON.stringify(ruoli)}\nPAGINA PRINCIPALE: ${pagina}\n` +
+          (report.extra ? `RICHIESTE DEL PROPRIETARIO: ${report.extra}\n` : '') + `\n${curBlock()}`);
+        const htmlPrima = new Map([...text].filter(([k]) => /\.html?$/i.test(k)));
+        const toccati = new Set(); let applicate = 0;
+        for (const m of plan.modifiche || []) {
+          const cur = text.get(m.file);
+          if (cur == null || !m.cerca || cur.indexOf(m.cerca) < 0) { log('✗ ' + m.file + ': marcatura non applicabile'); continue; }
+          text.set(m.file, cur.replace(m.cerca, () => m.sostituisci ?? ''));
+          toccati.add(m.file); changed.add(m.file); applicate++;
+          done.push({ file: m.file, tipo: 'edizioni', cosa: m.cosa, perche: m.perche, miglioria: m.miglioria, prima: m.cerca, dopo: m.sostituisci ?? '' });
+        }
+        const js = [...toccati].filter(f => /\.(m?js)$/i.test(f));
+        if (!js.some(f => /Edizioni\.registra\s*\(/.test(text.get(f)))) throw new Error('manca Edizioni.registra nel codice dell\'app');
+        if (![...toccati].some(f => /\.html?$/i.test(f) && /data-riservato/.test(text.get(f)))) throw new Error('nessuna parte marcata come riservata');
+        for (const f of toccati) {
+          if (/\.html?$/i.test(f) && !soloMarcature(htmlPrima.get(f) || '', text.get(f))) throw new Error(f + ': l\'AI ha cambiato l\'HTML oltre alle marcature');
+        }
+        text.set(dir + 'edizioni.js', motore); changed.add(dir + 'edizioni.js');
+        text.set(pagina, conScriptEdizioni(text.get(pagina), 'edizioni.js')); changed.add(pagina);
+        for (const f of new Set([...toccati, pagina, dir + 'edizioni.js'])) { const err = checkFile(f, text.get(f), text); if (err) throw new Error(f + ': ' + err); }
+        ok += applicate + 1;
+        done.push({ file: dir + 'edizioni.js', tipo: 'nuovo file', cosa: 'Motore delle edizioni per ruolo', perche: 'Serve a creare i file HTML per ' + ruoli.map(r => r.nome || r.ruolo).join(' e ') + ', togliendo le parti riservate.', miglioria: 'Puoi condividere l\'app con altre persone senza dar loro dati o funzioni riservate.', dopo: '(motore standard di Rinnova, non scritto dall\'AI)' });
+        riepilogo.push('Edizioni per ruolo: ' + ruoli.map(r => r.nome || r.ruolo).join(', ') + ' (sezione "Edizioni per ruolo" nell\'app).', ...(plan.riepilogo || []));
+        edNote = plan.da_verificare || [];
+        log('✓ edizioni per ruolo aggiunte (' + applicate + ' modifiche + edizioni.js)');
+      } catch (e) {
+        errore = e.message || String(e);
+        text.clear(); bkText.forEach((v, k) => text.set(k, v)); changed.clear(); bkChanged.forEach(v => changed.add(v));
+        ok = bkOk; done.length = bkDone; ko++;
+        skipped.push({ file: pagina || '—', cosa: 'Edizioni per ruolo', perche: 'annullato: ' + errore });
+        log('↩ edizioni per ruolo annullate: ' + errore);
+      }
+    }
     bar('#bar2', 0.45);
     if (!ok) throw new Error('L\'AI non ha prodotto modifiche applicabili. Riprova (a volte basta ripetere).');
     const fence = s => { const t = s.length > 1500 ? s.slice(0, 1500) + '\n… (continua)' : s; return '```\n' + t.replace(/```/g, '`​``') + '\n```'; };
@@ -562,6 +658,7 @@ $('#build').addEventListener('click', async () => {
       (d.prima != null ? `\n**Prima:**\n\n${fence(d.prima)}\n\n**Dopo:**\n\n${fence(d.dopo)}\n` : `\n**Contenuto:**\n\n${fence(d.dopo)}\n`)).join('\n');
     text.set('RINNOVA.md', reportMarkdown() + `\n# Cosa è cambiato nella nuova versione\n\n` + riepilogo.map(r => '- ' + r).join('\n') +
       `\n\nModifiche applicate: ${ok} · non applicabili: ${ko}\n\nOriginale: https://github.com/${chosen.full_name}\n\n## Ogni modifica, spiegata\n\n${dettaglio}\n` +
+      (edNote.length ? `\n## Edizioni per ruolo: da verificare a mano\n\nApri l'app, sezione **Edizioni per ruolo**, crea il file di ogni ruolo e aprilo da solo. Controlla in particolare:\n\n` + edNote.map(n => '- ' + n).join('\n') + '\n' : '') +
       (skipped.length ? `\n## Modifiche proposte ma non applicate\n\n` + skipped.map(s => `- \`${s.file}\`: ${s.cosa || ''} — ${s.perche || ''}`).join('\n') + '\n' : ''));
     changed.add('RINNOVA.md');
 
