@@ -293,6 +293,7 @@ $('#save').addEventListener('click', async () => {
     const t = await fetch(GM + 'models?pageSize=1', { headers: { 'x-goog-api-key': store.get('gm') } });
     if (!t.ok) throw new Error('la chiave Gemini non è valida');
     status('#st0', '✓ Tutto ok. Collegato come ' + u.login + '.', 'ok');
+    refreshSetupNotice();
     await loadRepos(); setTimeout(() => go('app'), 700);
   } catch (e) { status('#st0', 'Problema: ' + e.message, 'err'); }
 });
